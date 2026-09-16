@@ -14,6 +14,9 @@ def test_tokenize_known_string():
         assert token.index == index
         assert isinstance(token.token_id, int)
         assert isinstance(token.decoded_text, str)
+        assert isinstance(token.token_bytes, list)
+        assert all(isinstance(b, int) and 0 <= b <= 255 for b in token.token_bytes)
+        assert bytes(token.token_bytes).decode("utf-8", errors="replace") == token.decoded_text
 
     assert result.statistics.tokens_per_word == (
         result.statistics.token_count / result.statistics.word_count

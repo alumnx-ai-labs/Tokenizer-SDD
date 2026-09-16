@@ -44,6 +44,26 @@ class UploadTooLargeError(TokenizerError):
     status_code = 413
 
 
+class MissingSessionIdError(TokenizerError):
+    error_code = "missing_session_id"
+    status_code = 400
+
+
+class InvalidTokenizerStateError(TokenizerError):
+    error_code = "invalid_tokenizer_state"
+    status_code = 400
+
+
+class VocabularyInitError(TokenizerError):
+    error_code = "vocabulary_init_error"
+    status_code = 500
+
+
+class MalformedTokenDataError(TokenizerError):
+    error_code = "malformed_token_data"
+    status_code = 400
+
+
 def _error_response(request: Request, exc: TokenizerError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,

@@ -1,9 +1,11 @@
 # Tokenizer Application
 
 A small, stateless web tool that tokenizes text — pasted directly, or
-extracted from an uploaded `.txt`/`.pdf` file — using `tiktoken`.
+extracted from an uploaded `.txt`/`.pdf` file — using either `tiktoken`
+(Tiktokenizer mode) or an independent, educational Custom Tokenizer with
+its own dynamically-growing vocabulary.
 
-See [specs/001-tokenizer-app/quickstart.md](specs/001-tokenizer-app/quickstart.md)
+See [specs/002-react-custom-tokenizer/quickstart.md](specs/002-react-custom-tokenizer/quickstart.md)
 for full validation scenarios. Quick version:
 
 ## Setup
@@ -12,7 +14,9 @@ for full validation scenarios. Quick version:
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r backend/requirements.txt
-pip install -r frontend/requirements.txt
+
+cd frontend
+npm install
 ```
 
 ## Run the backend
@@ -28,69 +32,89 @@ In a second terminal:
 
 ```bash
 cd frontend
-export TOKENIZER_API_URL=http://localhost:8000
-streamlit run app.py
+npm run dev
 ```
 
-Open the URL Streamlit prints (default `http://localhost:8501`).
+Open the URL Vite prints (default `http://localhost:5173`). The frontend
+reads the backend URL from `VITE_TOKENIZER_API_URL` (default
+`http://localhost:8000`); set it in `frontend/.env.local` if needed (see
+`frontend/.env.local.example`).
 
 ## Frontend Overview
 
-The Streamlit app (`frontend/app.py`) gives users a simple way to tokenize
-text and inspect the result.
+The React app (`frontend/src/`) lets users tokenize text with either of two
+independent tokenizer engines and inspect the result.
 
-### Inputs
+### Tokenizer mode
 
-- **Encoding dropdown** — choose which `tiktoken` encoding to tokenize with.
-  Supported encodings (defined in `backend/app/core/config.py`):
+- **Tiktokenizer** (default) — uses the `tiktoken` library. Supported
+  encodings (defined in `backend/app/core/config.py`):
   - `cl100k_base` — used by GPT-3.5-turbo and GPT-4 (~100k vocab). General-purpose, good for English and code.
   - `o200k_base` — used by GPT-4o (~200k vocab). Larger vocabulary, more efficient for non-English text and special characters.
   - `p50k_base` — used by earlier GPT-3 models and Codex (~50k vocab). Well-tuned for code.
   - `r50k_base` — the original GPT-2/GPT-3 encoding (~50k vocab). Kept for legacy comparison.
+- **Custom Tokenizer** — a separate, deterministic tokenizer with its own
+  small seed vocabulary that grows as unseen words/punctuation/numbers are
+  encountered. It never reads or writes tiktoken's encodings. Each browser
+  gets its own isolated, in-memory vocabulary (via a generated session ID),
+  which can be reset back to its initial state at any time.
 
-  Picking a different encoding changes the "vocabulary" used to split text, so
-  the same input can produce a different number of tokens depending on which
-  one is selected.
+### Inputs
 
-- **Input mode (radio button)** — three choices: "Paste text", "Upload TXT
-  file", "Upload PDF file".
-  - Paste text mode shows a text area to type/paste directly into.
+- **Input mode (tabs)** — "Text", "TXT", or "PDF".
+  - Text mode shows a large text area to type/paste directly into.
   - Upload modes show a file uploader restricted to `.txt` or `.pdf`.
-
-- **Tokenize button** — sends the text/file and chosen encoding to the
-  backend for processing.
+- **Encoding dropdown** *(Tiktokenizer mode only)* — choose which `tiktoken`
+  encoding to tokenize with. Picking a different encoding changes the
+  "vocabulary" used to split text, so the same input can produce a
+  different number of tokens depending on which one is selected.
+- **Tokenize button** — sends the text/file to the backend for processing
+  with whichever tokenizer is currently selected.
 
 ### Output
 
-- **Extracted Text** *(file uploads only)* — a read-only text area showing
-  the raw text pulled from the uploaded file, before tokenization stats.
-
-- **Statistics** — 5 metric tiles:
+- **Statistics** — 5 metric tiles for both modes (Custom Tokenizer mode adds
+  two more: Vocabulary and New Tokens):
 
   | Tile | Meaning | Computation |
   |---|---|---|
   | Characters | Total character count | `len(text)` (includes spaces/newlines) |
   | Words | Total word count | `len(text.split())` (splits on whitespace) |
-  | Tokens | Number of tokens produced | `len(enc.encode(text))` |
+  | Tokens | Number of tokens produced | `len(tokens)` |
   | Tokens/Word | Average tokens per word | `token_count / word_count` (0.0 if no words) |
   | Tokens/Character | Average tokens per character | `token_count / character_count` (0.0 if empty) |
+  | Vocabulary *(Custom Tokenizer only)* | Current vocabulary size for this session | count of vocabulary entries after this request |
+  | New Tokens *(Custom Tokenizer only)* | Tokens/punctuation/numbers not seen before in this session | count of units from this request not already in the vocabulary |
 
   Ratios are displayed rounded to 2 decimal places in the UI; the backend
   returns unrounded floats.
 
-- **Tokens** — a line-by-line breakdown of every token produced, showing:
+- **Tokenized Output** — a card per token produced, showing:
   - `#index` — its position in the sequence
-  - **ID** — the numeric token ID from the tokenizer's vocabulary
-  - **Decoded** — the actual text/substring that token represents
+  - **text** — the token's text (decoded text for Tiktokenizer mode, the raw
+    unit for Custom Tokenizer mode)
+  - **ID** — its numeric token ID
+  - **Bytes** — the token's raw UTF-8 byte values
 
-  Because tokenization uses Byte-Pair Encoding (BPE), token boundaries are
-  not fixed-length — common words/substrings seen often during training
-  become single tokens, while rare or unusual text (like uncommon names) gets
-  broken into smaller pieces, sometimes down to individual characters.
+  In Tiktokenizer mode, tokenization uses Byte-Pair Encoding (BPE), so token
+  boundaries are not fixed-length — common words/substrings seen often during
+  training tend to become single tokens, while rarer words get split into
+  smaller pieces. In Custom Tokenizer mode, newly created tokens are visibly
+  marked "NEW".
+
+- **Vocabulary** *(Custom Tokenizer mode only)* — a live, searchable table
+  of every vocabulary entry (ID, token, frequency, status), plus a "Reset
+  Vocabulary" button (with a confirmation step) that restores the seed
+  vocabulary.
 
 ## Run tests
 
 ```bash
+# Backend
 cd backend
 pytest
+
+# Frontend
+cd frontend
+npm test
 ```

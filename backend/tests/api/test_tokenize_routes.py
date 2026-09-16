@@ -40,6 +40,9 @@ def test_tokenize_text_success():
     body = response.json()
     assert body["source_type"] == "text"
     assert body["statistics"]["token_count"] == len(body["tokens"])
+    for token in body["tokens"]:
+        assert isinstance(token["token_bytes"], list)
+        assert all(isinstance(b, int) for b in token["token_bytes"])
 
 
 def test_tokenize_text_empty_input():
@@ -81,6 +84,7 @@ def test_tokenize_txt_file_success():
     body = response.json()
     assert body["source_type"] == "txt_file"
     assert body["text"] == "Hello, tokenizer world!"
+    assert all(isinstance(token["token_bytes"], list) for token in body["tokens"])
 
 
 def test_tokenize_txt_file_empty():

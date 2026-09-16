@@ -89,3 +89,49 @@ def test_statelessness_across_requests():
 
     files_after = set(os.listdir(repo_root))
     assert files_before == files_after
+
+
+def test_custom_tokenizer_end_to_end_flow_and_reset():
+    session_id = "integration-custom-session"
+
+    tokenize_response = client.post(
+        "/api/v1/custom-tokenizer/tokenize/text",
+        json={"text": "hello integrationword"},
+        headers={"X-Session-Id": session_id},
+    )
+    assert tokenize_response.status_code == 200
+    body = tokenize_response.json()
+    is_new_by_text = {t["token_text"]: t["is_new"] for t in body["tokens"]}
+    assert is_new_by_text["integrationword"] is True
+
+    vocabulary_response = client.get(
+        "/api/v1/custom-tokenizer/vocabulary", headers={"X-Session-Id": session_id}
+    )
+    assert any(
+        entry["token_text"] == "integrationword"
+        for entry in vocabulary_response.json()["vocabulary"]
+    )
+
+    reset_response = client.post(
+        "/api/v1/custom-tokenizer/reset", headers={"X-Session-Id": session_id}
+    )
+    assert reset_response.status_code == 200
+    assert reset_response.json()["vocabulary_size"] == 3
+    assert not any(
+        entry["token_text"] == "integrationword"
+        for entry in reset_response.json()["vocabulary"]
+    )
+
+
+def test_custom_tokenizer_session_isolation():
+    client.post(
+        "/api/v1/custom-tokenizer/tokenize/text",
+        json={"text": "isolationword"},
+        headers={"X-Session-Id": "integration-session-a"},
+    )
+    other_session_vocabulary = client.get(
+        "/api/v1/custom-tokenizer/vocabulary",
+        headers={"X-Session-Id": "integration-session-b"},
+    ).json()["vocabulary"]
+
+    assert not any(entry["token_text"] == "isolationword" for entry in other_session_vocabulary)

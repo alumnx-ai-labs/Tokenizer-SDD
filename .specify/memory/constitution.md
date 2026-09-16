@@ -1,17 +1,27 @@
 <!--
 Sync Impact Report
-Version change: [none, unfilled template] → 1.0.0
-Modified principles: N/A (initial ratification)
-Added sections:
-  - Core Principles (I–XIV)
-  - Technology Stack
-  - Quality & Security Gates
-  - Governance
+Version change: 1.0.0 → 2.0.0
+Modified principles:
+  - I. Simple, Modular Architecture — "Streamlit frontend" → "frontend service"
+    (technology-neutral wording; still two services over REST/HTTP only)
+  - II. Streamlit Is Presentation-Only → II. Frontend Is Presentation-Only
+    (React + TypeScript replaces Streamlit; role/constraints unchanged)
+  - V. tiktoken Is the Single Source of Truth → V. tiktoken Is the Single
+    Source of Truth for Tiktokenizer Mode (rescoped to permit exactly one
+    other, fully independent, non-tiktoken engine — the Custom Tokenizer —
+    per an explicitly specified feature; a third tokenizer still requires
+    a further amendment)
+  - XII. Local-Development and Simple Deployment — replaced the
+    `streamlit run ...` example with a technology-neutral one
+Added sections: none (Technology Stack entry for Frontend updated in place)
 Removed sections: none
+Rationale for MAJOR bump: redefines two existing principles' normative
+content (II, V), not just wording/expansion — backward-incompatible with
+prior guidance that fixed Streamlit and forbade any second tokenizer.
 Templates requiring updates:
-  - .specify/templates/plan-template.md — ⚠ pending manual check (verify Constitution Check gate references these principles)
-  - .specify/templates/spec-template.md — ⚠ pending manual check (no direct constitution reference expected)
-  - .specify/templates/tasks-template.md — ⚠ pending manual check (verify task categorization aligns with testing principles)
+  - .specify/templates/plan-template.md — ⚠ pending manual check
+  - .specify/templates/spec-template.md — ⚠ pending manual check
+  - .specify/templates/tasks-template.md — ⚠ pending manual check
 Follow-up TODOs: none
 -->
 
@@ -20,43 +30,52 @@ Follow-up TODOs: none
 ## Core Principles
 
 ### I. Simple, Modular Architecture
-The system MUST be composed of two clearly separated services: a Streamlit
-frontend and a FastAPI backend, communicating only over REST/HTTP. Each
+The system MUST be composed of two clearly separated services: a frontend
+service and a FastAPI backend, communicating only over REST/HTTP. Each
 service MUST remain independently runnable and independently testable.
 New functionality MUST fit into this two-service shape before any new
 component, service, or layer is introduced.
 Rationale: A small tokenization tool has no need for distributed complexity;
 simplicity keeps the system easy to reason about, run locally, and hand off.
 
-### II. Streamlit Is Presentation-Only
-The Streamlit frontend MUST be limited to rendering UI, collecting user input
-(text, TXT, PDF uploads), calling the backend API, and displaying results and
-errors. The frontend MUST NOT implement tokenization, PDF parsing, or any
-business/document-processing logic.
+### II. Frontend Is Presentation-Only
+The frontend (React + TypeScript) MUST be limited to rendering UI,
+collecting user input (text, TXT, PDF uploads), calling the backend API, and
+displaying results and errors. The frontend MUST NOT implement tokenization,
+PDF parsing, custom-vocabulary logic, or any other business/document-
+processing logic.
 Rationale: Keeping the UI layer "dumb" prevents logic drift between what the
 user sees and what the backend actually computes.
 
 ### III. FastAPI Owns Tokenization and Document Processing
 All tokenization and document-processing logic (text extraction from PDFs,
-input normalization, token counting/encoding) MUST live in the FastAPI
-backend, exposed through well-defined endpoints. The frontend MUST treat the
-backend as the sole authority for these operations.
+input normalization, token counting/encoding, custom-vocabulary management)
+MUST live in the FastAPI backend, exposed through well-defined endpoints.
+The frontend MUST treat the backend as the sole authority for these
+operations.
 Rationale: Centralizing processing logic in one service creates a single
 place to fix bugs, add encodings, or change extraction behavior.
 
 ### IV. No Duplicated Tokenization Logic
-Tokenization logic MUST NOT be reimplemented, copied, or approximated in the
-Streamlit layer, even for previews or client-side estimates. If the frontend
-needs token counts, it MUST obtain them from the backend API.
-Rationale: Duplicate implementations inevitably diverge from tiktoken's
+Tokenization logic (tiktoken-based or the Custom Tokenizer's) MUST NOT be
+reimplemented, copied, or approximated in the frontend, even for previews or
+client-side estimates. If the frontend needs token counts, it MUST obtain
+them from the backend API.
+Rationale: Duplicate implementations inevitably diverge from the backend's
 actual behavior, producing misleading counts.
 
-### V. tiktoken Is the Single Source of Truth
-All token counting and encoding/decoding operations MUST use the `tiktoken`
-library exclusively. No alternative or custom tokenizers MUST be introduced
-without amending this constitution.
-Rationale: A single, well-defined tokenizer guarantees consistent, correct
-results across the entire application.
+### V. tiktoken Is the Single Source of Truth for Tiktokenizer Mode
+All Tiktokenizer-mode token counting and encoding/decoding operations MUST
+use the `tiktoken` library exclusively, and MUST NOT be altered or
+supplemented by any other tokenization logic. Exactly one additional,
+fully independent tokenizer MAY exist — the Custom Tokenizer, defined by an
+explicit feature specification — provided it maintains its own separate
+vocabulary and never reads or writes tiktoken's encodings. Introducing a
+third tokenizer, or blending the Custom Tokenizer's vocabulary with any
+tiktoken encoding, MUST NOT happen without amending this constitution.
+Rationale: A single, well-defined engine per mode guarantees consistent,
+correct results, while still allowing one clearly separated, educational
+alternative without opening the door to unbounded tokenizer sprawl.
 
 ### VI. Backend-Enforced Input Validation
 The FastAPI backend MUST validate all uploaded files and input payloads,
@@ -106,11 +125,12 @@ Rationale: This application is a stateless utility; persistence adds
 operational and security surface area with no corresponding requirement.
 
 ### XII. Local-Development and Simple Deployment
-The application MUST remain runnable with minimal setup: a standard Python
-environment, `pip install` of dependencies, and two local processes
-(`streamlit run ...` and a FastAPI server, e.g. via `uvicorn`). Deployment
-MUST NOT require container orchestration, message queues, or multi-service
-infrastructure beyond the two application services.
+The application MUST remain runnable with minimal setup: standard package
+managers for each service (`pip install` for the backend, `npm install` for
+the frontend), and two local processes (the frontend's dev server and a
+FastAPI server, e.g. via `uvicorn`). Deployment MUST NOT require container
+orchestration, message queues, or multi-service infrastructure beyond the
+two application services.
 Rationale: Ease of local development and simple deployment is a stated
 project goal, not an afterthought.
 
@@ -134,13 +154,15 @@ unmaintainable; this project stays deliberately narrow.
 
 The following stack is fixed for this project and MUST NOT be substituted
 without a constitution amendment:
-- **Frontend**: Streamlit
+- **Frontend**: React + TypeScript (built with Vite)
 - **Backend**: FastAPI
-- **Tokenization**: tiktoken
+- **Tokenization**: tiktoken (Tiktokenizer mode); one dedicated in-process
+  Custom Tokenizer service (Custom Tokenizer mode) — see Principle V
 - **PDF extraction**: PyMuPDF
-- **Language**: Python
+- **Language**: Python (backend), TypeScript (frontend)
 - **API communication**: REST/HTTP (JSON payloads, Pydantic-defined schemas)
-- **Testing**: pytest (unit tests and API tests)
+- **Testing**: pytest (backend unit/API tests), Vitest + React Testing
+  Library (frontend component tests)
 
 Introducing an additional library MUST be justified against an existing
 principle (e.g. a new library that reduces duplication under Principle XIII)
@@ -189,4 +211,4 @@ Constitution Check against these principles before implementation tasks are
 generated. Any deviation MUST be explicitly justified in the plan's
 Complexity Tracking section or the deviation MUST be removed.
 
-**Version**: 1.0.0 | **Ratified**: 2026-09-16 | **Last Amended**: 2026-09-16
+**Version**: 2.0.0 | **Ratified**: 2026-09-16 | **Last Amended**: 2026-09-16

@@ -7,16 +7,17 @@ def tokenize(text: str, encoding: str, source_type: SourceType) -> TokenizationR
     enc = tiktoken.get_encoding(encoding)
     token_ids = enc.encode(text)
 
-    tokens = [
-        Token(
-            index=index,
-            token_id=token_id,
-            decoded_text=enc.decode_single_token_bytes(token_id).decode(
-                "utf-8", errors="replace"
-            ),
+    tokens = []
+    for index, token_id in enumerate(token_ids):
+        token_bytes = enc.decode_single_token_bytes(token_id)
+        tokens.append(
+            Token(
+                index=index,
+                token_id=token_id,
+                decoded_text=token_bytes.decode("utf-8", errors="replace"),
+                token_bytes=list(token_bytes),
+            )
         )
-        for index, token_id in enumerate(token_ids)
-    ]
 
     character_count = len(text)
     word_count = len(text.split())

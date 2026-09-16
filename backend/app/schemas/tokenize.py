@@ -20,6 +20,7 @@ class Token(BaseModel):
     index: int
     token_id: int
     decoded_text: str
+    token_bytes: list[int]
 
 
 class TokenStatistics(BaseModel):
