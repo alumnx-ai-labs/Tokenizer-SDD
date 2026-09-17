@@ -259,3 +259,74 @@ Task: "TokenCard new/existing rendering test in frontend/src/components/TokenCar
 
 - [X] T069 CRITICAL: Add `CORSMiddleware` to `backend/app/main.py` allowing the frontend's dev origin (e.g. `http://localhost:5173`, ideally read from an environment variable with that as the default) for methods `GET`/`POST` and headers including `Content-Type` and `X-Session-Id`; add an API test asserting an `OPTIONS` preflight to a custom-tokenizer endpoint from that origin returns the correct `Access-Control-Allow-Origin`/`-Methods`/`-Headers` response instead of today's 405, per plan.md's REST/HTTP frontend-backend communication architecture (missing)
 - [X] T070 Fix the concurrency race in `CustomTokenizerService.tokenize()` (`backend/app/services/custom_tokenizer_service.py`): the read-modify-write cycle on a session's vocabulary (`SessionVocabularyStore.get_or_create` → mutate the returned list → `SessionVocabularyStore.update`) currently runs outside the store's lock, so concurrent requests for the same session can race. Add a lock-protected mutation path on `SessionVocabularyStore` (e.g. a `mutate(session_id, fn)` method or context manager that holds the lock for the whole cycle) and use it in `tokenize()`; add a test that fires concurrent `tokenize()` calls for the same new word in the same session and asserts exactly one resulting vocabulary entry with no duplicate IDs, per spec.md Edge Cases (contradicts)
+
+---
+
+## Phase 9: User Story 5 - Train a BPE Tokenizer on Custom Text (Priority: P5)
+
+**Added 2026-09-17** to cover spec.md's BPE enhancement (FR-019–FR-024, FR-029, FR-032–FR-033), which had zero task coverage per `/speckit-analyze`'s findings G1–G4. plan.md predates this spec update and has no BPE architecture section, so the file/service layout below follows the same structurally-parallel pattern plan.md already established for the word-based Custom Tokenizer (its own service/schema/routes files, constitution Principle XIII) rather than a formally re-planned design.
+
+**Goal**: Within Custom Tokenizer mode, a user enters training text and a target vocabulary size and starts BPE training, then sees the learned vocabulary, ordered merge rules, and step-by-step training log.
+
+**Independent Test**: Open the BPE Training sub-flow, submit training text and a target vocabulary size, and confirm the resulting vocabulary, merge rules, and training log are displayed and internally consistent — without touching the word-based Custom Tokenizer or Tiktokenizer.
+
+**Depends on**: Foundational (Phase 2) and US2's `X-Session-Id` session-scoping pattern (Phase 4); independent of US3/US4.
+
+### Tests for User Story 5 ⚠️
+
+- [X] T071 [P] [US5] Create `backend/tests/unit/test_bpe_service.py`: training splits on whitespace first and never merges across a word boundary; base symbols are individual Unicode characters and case-sensitive (`"A"` and `"a"` distinct); the most frequent within-word adjacent pair is merged first, ties broken deterministically; token IDs are assigned deterministically (two training runs on identical input/vocab_size produce identical vocabulary, merge_rules order, and IDs); training stops early (vocabulary smaller than requested) when no pair repeats; a vocab_size at/below the training text's base-symbol count raises `InvalidVocabSizeError`
+- [X] T072 [P] [US5] Create `backend/tests/api/test_bpe_routes.py`: `POST /api/v1/bpe/train` returns 200 with `vocabulary`/`merge_rules`/`training_log` for valid input; empty/whitespace-only `training_text` returns 400 `empty_input`; `training_text` over 5 MB returns 413 `upload_too_large`; non-integer/zero/negative/at-or-below-base-symbol-count/over-50000 `vocab_size` returns 400 `invalid_vocab_size` with a distinct message per case; a second training request for a session whose training is already in progress returns 409 `bpe_training_in_progress`; missing `X-Session-Id` returns 400 `missing_session_id`; retraining a session replaces its previous model
+- [X] T073 [P] [US5] Create `frontend/src/components/BpeTrainingForm.test.tsx`: renders a training-text textarea and a vocabulary-size number input; disables the Train button while a `loading` prop is true; renders a passed-in validation error message; calls a parent `onSubmit(trainingText, vocabSize)` handler on submit
+- [X] T074 [P] [US5] Create `frontend/src/components/BpeTrainingResult.test.tsx`: given no training result, renders an empty state stating no BPE model has been trained yet; given a training response, renders the vocabulary table, the ordered merge rules, and the step-by-step training log (pair, frequency, merged token per step)
+
+### Implementation for User Story 5
+
+- [X] T075 [US5] Create `backend/app/schemas/bpe.py` with Pydantic models (constitution Principle VII): `BPEVocabularyEntry` (token_id, token_text), `BPEMergeRule` (step, pair: list[str] of two token texts, merged_token_text), `BPETrainingStep` (step, pair, frequency, merged_token_text), `BPETrainRequest` (training_text, vocab_size), `BPETrainResponse` (vocabulary: list[BPEVocabularyEntry], merge_rules: list[BPEMergeRule], training_log: list[BPETrainingStep], vocabulary_size)
+- [X] T076 [US5] Add BPE-specific exceptions to `backend/app/core/errors.py`, following the existing `TokenizerError` subclass pattern: `InvalidVocabSizeError` (400, `invalid_vocab_size`), `BPETrainingInProgressError` (409, `bpe_training_in_progress`), `InvalidBPEModelStateError` (500, `invalid_bpe_model_state`)
+- [X] T077 [US5] Create `backend/app/core/bpe_session_store.py` with a `SessionBPEModelStore` class: an in-memory `dict[str, BPEModel]` (vocabulary, merge_rules, training_log) guarded by one `threading.Lock`, exposing `get(session_id) -> BPEModel | None`, `set(session_id, model)` (replaces any existing model), and a per-session in-progress flag/lock supporting FR-021's reject-concurrent-training rule (mirrors `SessionVocabularyStore`'s lock-protected mutation pattern from T070)
+- [X] T078 [US5] Create `backend/app/services/bpe_service.py` with a `BpeService.train(session_id, training_text, vocab_size) -> BPETrainResponse`: reuse `validation.validate_non_empty_text`/`validation.validate_upload_size` for `training_text`; raise `InvalidVocabSizeError` if `vocab_size` isn't a positive integer strictly greater than the training text's distinct base-symbol count or exceeds 50,000; split `training_text` into words on whitespace (whitespace runs are their own unmerged unit), initialize base symbols as individual case-sensitive Unicode characters within each word; repeatedly find the most frequent within-word adjacent pair, merge it, assign the next sequential deterministic token ID, and append an ordered `BPEMergeRule`/`BPETrainingStep`, stopping at `vocab_size` or when no pair repeats; store the result via `SessionBPEModelStore.set`, replacing any prior model for that session
+- [X] T079 [US5] Create `backend/app/api/bpe_routes.py` with `router = APIRouter(prefix="/api/v1/bpe")`, reusing `require_session_id` from `app.api.custom_tokenizer_routes`; `POST /train` declared with `response_model=BPETrainResponse`: raise `BPETrainingInProgressError` if the session's training-in-progress flag is set, otherwise call `BpeService.train`
+- [X] T080 [US5] Register the BPE router in `backend/app/main.py`
+- [X] T081 [P] [US5] Add `BpeVocabularyEntry`, `BpeMergeRule`, `BpeTrainingStep`, `BpeTrainRequest`, `BpeTrainResponse` interfaces to `frontend/src/types/api.ts`, mirroring the new backend schemas
+- [X] T082 [US5] Add `trainBpe(sessionId, trainingText, vocabSize)` to `frontend/src/api/client.ts`, posting JSON to `POST /api/v1/bpe/train` with an `X-Session-Id` header
+- [X] T083 [P] [US5] Create `frontend/src/components/CustomTokenizerSubModeSelector.tsx` (tabs: "Word-based" / "Train BPE" / "Tokenize with BPE"; rendered only in Custom Tokenizer mode; calls a parent-provided `onChange`) so the three flows are never triggered from one ambiguous control (FR-019)
+- [X] T084 [P] [US5] Create `frontend/src/components/BpeTrainingForm.tsx` (training-text textarea, target-vocabulary-size number input, Train button disabled while loading, inline validation error display)
+- [X] T085 [P] [US5] Create `frontend/src/components/BpeVocabularyTable.tsx` (renders the trained vocabulary's token ID/text rows)
+- [X] T086 [P] [US5] Create `frontend/src/components/BpeMergeRulesList.tsx` (renders the ordered merge rules)
+- [X] T087 [P] [US5] Create `frontend/src/components/BpeTrainingLog.tsx` (renders the step-by-step training log: pair, frequency, merged token, per step)
+- [X] T088 [US5] Create `frontend/src/components/BpeTrainingResult.tsx` (container: renders the "not trained yet" empty state when no result exists, otherwise composes `BpeVocabularyTable` + `BpeMergeRulesList` + `BpeTrainingLog`)
+- [X] T089 [US5] Wire the BPE Training sub-flow into `frontend/src/App.tsx`: shown when `CustomTokenizerSubModeSelector` is on "Train BPE"; calls `trainBpe`, shows `LoadingState` while in flight and `ErrorMessage` on failure, renders `BpeTrainingResult` on success, and stores the trained model's presence in state for T101 to read; starting a new training run proceeds immediately without a confirmation step (FR-029)
+
+**Checkpoint**: User Story 5 is fully functional and independently testable — BPE Training works end-to-end without touching Tiktokenizer or the word-based Custom Tokenizer.
+
+---
+
+## Phase 10: User Story 6 - Tokenize Text with the Trained BPE Tokenizer (Priority: P6)
+
+**Added 2026-09-17** alongside Phase 9, covering spec.md's remaining BPE requirements (FR-025–FR-028, FR-030–FR-031, FR-033).
+
+**Goal**: After training a BPE model, a user enters new text and tokenizes it, seeing the resulting tokens and token IDs in the existing tokenization result table.
+
+**Independent Test**: Train a BPE model, then tokenize new text (including characters unseen during training) in the BPE Tokenization sub-flow, and confirm the displayed tokens/IDs are correct, deterministic, and that the trained model is unchanged afterward.
+
+**Depends on**: Phase 9 (a trained model must exist to tokenize against) and the existing `TokenVisualization`/`TokenCard` result-table components from US1/US2 (Phases 3–4), which this story reuses rather than replaces (FR-028).
+
+### Tests for User Story 6 ⚠️
+
+- [X] T090 [P] [US6] Extend `backend/tests/unit/test_bpe_service.py`: `tokenize()` applies only the trained model's `merge_rules`, in their learned order, without adding, removing, or reordering any rule; tokenizing identical text twice yields identical tokens/IDs and leaves the stored model unchanged; text containing a character never seen during training still tokenizes deterministically via an unmerged base-symbol token for that character; calling `tokenize()` for a session with no trained model raises `BPEModelNotTrainedError`
+- [X] T091 [P] [US6] Extend `backend/tests/api/test_bpe_routes.py`: `POST /api/v1/bpe/tokenize/text` returns 200 with ordered `tokens`/token IDs for a session with a trained model; returns 400 `bpe_model_not_trained` for a session with no trained model; returns 400 `empty_input` for empty/whitespace-only text; after retraining a session, tokenizing uses only the newest model's rules
+- [X] T092 [P] [US6] Create `frontend/src/components/BpeTokenizePanel.test.tsx`: renders a blocked/empty state instructing the user to train first when no trained model is available; renders a text input + Tokenize button when a trained model exists; calls a parent-provided tokenize handler on submit
+- [X] T093 [P] [US6] Extend `frontend/src/App.test.tsx`: switching to the BPE Tokenization sub-view before any training shows the blocked/empty state and does not call the tokenize API; after training, tokenizing renders results via the existing `StatisticsPanel`/`TokenVisualization`/`TokenCard` components
+
+### Implementation for User Story 6
+
+- [X] T094 [US6] Add `BPEToken` (index, token_id, token_text), `BPETokenizeRequest` (text), `BPETokenizeResult` (text, tokens, token_count, character_count, word_count, tokens_per_word, tokens_per_character) to `backend/app/schemas/bpe.py`
+- [X] T095 [US6] Add `BPEModelNotTrainedError` (400, `bpe_model_not_trained`) to `backend/app/core/errors.py`
+- [X] T096 [US6] Add `BpeService.tokenize(session_id, text) -> BPETokenizeResult`: raise `BPEModelNotTrainedError` if `SessionBPEModelStore.get(session_id)` is `None`; otherwise split `text` the same way as training (whitespace-first, case-sensitive characters within each word) and apply the stored `merge_rules` in their learned order, falling back to an unmerged base-symbol token for any character absent from the trained vocabulary, without mutating the stored model
+- [X] T097 [US6] Add `POST /tokenize/text` to `backend/app/api/bpe_routes.py`, declared with `response_model=BPETokenizeResult`: validate non-empty text via `validation.validate_non_empty_text`, then call `BpeService.tokenize`
+- [X] T098 [P] [US6] Add `BpeToken`, `BpeTokenizeRequest`, `BpeTokenizeResult` interfaces to `frontend/src/types/api.ts`
+- [X] T099 [US6] Add `bpeTokenizeText(sessionId, text)` to `frontend/src/api/client.ts`, posting to `POST /api/v1/bpe/tokenize/text` with an `X-Session-Id` header
+- [X] T100 [P] [US6] Create `frontend/src/components/BpeTokenizePanel.tsx` (text input + Tokenize button; renders a blocked/empty state instructing the user to train first when no trained model exists for the session, per FR-025)
+- [X] T101 [US6] Wire the BPE Tokenization sub-flow into `frontend/src/App.tsx`: shown when `CustomTokenizerSubModeSelector` is on "Tokenize with BPE"; reads the trained-model-presence state from T089 to decide between `BpeTokenizePanel`'s blocked state and its active form; calls `bpeTokenizeText` and renders results through the existing `StatisticsPanel`/`TokenVisualization`/`TokenCard` components (FR-028) rather than a new table
+
+**Checkpoint**: User Stories 1–6 are all independently functional — BPE Training and BPE Tokenization complete the Custom Tokenizer enhancement without regressing Tiktokenizer or the word-based Custom Tokenizer (FR-033).

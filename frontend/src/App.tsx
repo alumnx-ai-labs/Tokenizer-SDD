@@ -10,17 +10,27 @@ import StatisticsPanel from "./components/StatisticsPanel";
 import TokenVisualization from "./components/TokenVisualization";
 import ErrorMessage from "./components/ErrorMessage";
 import LoadingState from "./components/LoadingState";
-import VocabularyPanel from "./components/VocabularyPanel";
+import CustomTokenizerSubModeSelector, {
+  type CustomTokenizerSubMode,
+} from "./components/CustomTokenizerSubModeSelector";
+import BpeTrainingForm from "./components/BpeTrainingForm";
+import BpeTrainingResult from "./components/BpeTrainingResult";
+import BpeTokenizePanel from "./components/BpeTokenizePanel";
 import { useSessionId } from "./hooks/useSessionId";
 import {
   ApiError,
-  customTokenizeFile,
-  customTokenizeText,
+  bpeTokenizeText,
   getEncodings,
   tokenizeFile,
   tokenizeText,
+  trainBpe,
 } from "./api/client";
-import type { CustomTokenizationResult, SupportedEncoding, TokenizationResult } from "./types/api";
+import type {
+  BpeTokenizeResult,
+  BpeTrainResponse,
+  SupportedEncoding,
+  TokenizationResult,
+} from "./types/api";
 
 function App() {
   const sessionId = useSessionId();
@@ -30,12 +40,14 @@ function App() {
   const [file, setFile] = useState<File | null>(null);
   const [encodings, setEncodings] = useState<SupportedEncoding[]>([]);
   const [encoding, setEncoding] = useState<SupportedEncoding>("cl100k_base");
-  const [result, setResult] = useState<TokenizationResult | CustomTokenizationResult | null>(
-    null
-  );
+  const [result, setResult] = useState<TokenizationResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
-  const [vocabularyRefreshKey, setVocabularyRefreshKey] = useState(0);
+  const [customSubMode, setCustomSubMode] = useState<CustomTokenizerSubMode>("train-bpe");
+  const [bpeTrainResult, setBpeTrainResult] = useState<BpeTrainResponse | null>(null);
+  const [bpeTokenizeResult, setBpeTokenizeResult] = useState<BpeTokenizeResult | null>(null);
+  const [bpeLoading, setBpeLoading] = useState(false);
+  const [bpeError, setBpeError] = useState<ApiError | null>(null);
 
   useEffect(() => {
     getEncodings()
@@ -62,28 +74,15 @@ function App() {
     setLoading(true);
     setError(null);
     try {
-      let response: TokenizationResult | CustomTokenizationResult;
-      if (tokenizerMode === "tiktokenizer") {
-        if (inputMode === "text") {
-          response = await tokenizeText(text, encoding);
-        } else if (file) {
-          response = await tokenizeFile(file, encoding);
-        } else {
-          return;
-        }
+      let response: TokenizationResult;
+      if (inputMode === "text") {
+        response = await tokenizeText(text, encoding);
+      } else if (file) {
+        response = await tokenizeFile(file, encoding);
       } else {
-        if (inputMode === "text") {
-          response = await customTokenizeText(text, sessionId);
-        } else if (file) {
-          response = await customTokenizeFile(file, sessionId);
-        } else {
-          return;
-        }
+        return;
       }
       setResult(response);
-      if (tokenizerMode === "custom") {
-        setVocabularyRefreshKey((key) => key + 1);
-      }
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err);
@@ -93,58 +92,114 @@ function App() {
     }
   }
 
-  const tiktokenResult = result && "statistics" in result ? result : null;
-  const customResult = result && "vocabulary_size" in result ? result : null;
+  async function handleTrainBpe(trainingText: string, vocabSize: number) {
+    setBpeLoading(true);
+    setBpeError(null);
+    try {
+      const response = await trainBpe(sessionId, trainingText, vocabSize);
+      setBpeTrainResult(response);
+      setBpeTokenizeResult(null);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setBpeError(err);
+      }
+    } finally {
+      setBpeLoading(false);
+    }
+  }
+
+  async function handleBpeTokenize(text: string) {
+    setBpeLoading(true);
+    setBpeError(null);
+    try {
+      const response = await bpeTokenizeText(sessionId, text);
+      setBpeTokenizeResult(response);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setBpeError(err);
+      }
+    } finally {
+      setBpeLoading(false);
+    }
+  }
+
+  function handleCustomSubModeChange(mode: CustomTokenizerSubMode) {
+    setCustomSubMode(mode);
+    setBpeError(null);
+  }
 
   return (
     <div className="app">
       <Header />
       <TokenizerModeSelector mode={tokenizerMode} onChange={handleModeChange} />
-      <h2>Input</h2>
-      <InputModeSelector mode={inputMode} onChange={setInputMode} />
+
       {tokenizerMode === "tiktokenizer" && (
-        <EncodingSelector encodings={encodings} value={encoding} onChange={setEncoding} />
-      )}
-      {inputMode === "text" ? (
-        <TextInput value={text} onChange={setText} />
-      ) : (
-        <FileUploader accept={inputMode === "txt" ? ".txt" : ".pdf"} onChange={setFile} />
-      )}
-      <TokenizeButton onClick={handleTokenize} loading={loading} />
-
-      {loading && <LoadingState />}
-      {error && <ErrorMessage errorCode={error.error_code} detail={error.detail} />}
-
-      {tiktokenResult && (
         <>
-          <h2>Statistics</h2>
-          <StatisticsPanel stats={tiktokenResult.statistics} />
-          <h2>Tokenized Output</h2>
-          <TokenVisualization tokens={tiktokenResult.tokens} />
-        </>
-      )}
+          <h2>Input</h2>
+          <InputModeSelector mode={inputMode} onChange={setInputMode} />
+          <EncodingSelector encodings={encodings} value={encoding} onChange={setEncoding} />
+          {inputMode === "text" ? (
+            <TextInput value={text} onChange={setText} />
+          ) : (
+            <FileUploader accept={inputMode === "txt" ? ".txt" : ".pdf"} onChange={setFile} />
+          )}
+          <TokenizeButton onClick={handleTokenize} loading={loading} />
 
-      {customResult && (
-        <>
-          <h2>Statistics</h2>
-          <StatisticsPanel
-            stats={{
-              character_count: customResult.character_count,
-              word_count: customResult.word_count,
-              token_count: customResult.token_count,
-              tokens_per_word: customResult.tokens_per_word,
-              tokens_per_character: customResult.tokens_per_character,
-            }}
-            vocabularySize={customResult.vocabulary_size}
-            newTokenCount={customResult.new_token_count}
-          />
-          <h2>Tokenized Output</h2>
-          <TokenVisualization tokens={customResult.tokens} />
+          {loading && <LoadingState />}
+          {error && <ErrorMessage errorCode={error.error_code} detail={error.detail} />}
+
+          {result && (
+            <>
+              <h2>Statistics</h2>
+              <StatisticsPanel stats={result.statistics} />
+              <h2>Tokenized Output</h2>
+              <TokenVisualization tokens={result.tokens} />
+            </>
+          )}
         </>
       )}
 
       {tokenizerMode === "custom" && (
-        <VocabularyPanel sessionId={sessionId} refreshKey={vocabularyRefreshKey} />
+        <CustomTokenizerSubModeSelector mode={customSubMode} onChange={handleCustomSubModeChange} />
+      )}
+
+      {tokenizerMode === "custom" && customSubMode === "train-bpe" && (
+        <>
+          <h2>Train BPE</h2>
+          <BpeTrainingForm loading={bpeLoading} onSubmit={handleTrainBpe} />
+          {bpeLoading && <LoadingState />}
+          {bpeError && <ErrorMessage errorCode={bpeError.error_code} detail={bpeError.detail} />}
+          <BpeTrainingResult result={bpeTrainResult} />
+        </>
+      )}
+
+      {tokenizerMode === "custom" && customSubMode === "tokenize-bpe" && (
+        <>
+          <h2>Tokenize with BPE</h2>
+          <BpeTokenizePanel
+            hasTrainedModel={bpeTrainResult !== null}
+            loading={bpeLoading}
+            onSubmit={handleBpeTokenize}
+          />
+          {bpeLoading && <LoadingState />}
+          {bpeError && <ErrorMessage errorCode={bpeError.error_code} detail={bpeError.detail} />}
+          {bpeTokenizeResult && (
+            <>
+              <h2>Statistics</h2>
+              <StatisticsPanel
+                stats={{
+                  character_count: bpeTokenizeResult.character_count,
+                  word_count: bpeTokenizeResult.word_count,
+                  token_count: bpeTokenizeResult.token_count,
+                  tokens_per_word: bpeTokenizeResult.tokens_per_word,
+                  tokens_per_character: bpeTokenizeResult.tokens_per_character,
+                }}
+              />
+              <h2>Tokenized Output</h2>
+              <TokenVisualization tokens={bpeTokenizeResult.tokens} />
+            </>
+          )}
+        </>
       )}
     </div>
   );

@@ -29,46 +29,48 @@ export interface EncodingsResponse {
   encodings: SupportedEncoding[];
 }
 
-export type VocabularyStatus = "initial" | "existing" | "new";
-
-export interface VocabularyEntry {
-  token_id: number;
-  token_text: string;
-  frequency: number;
-  status: VocabularyStatus;
+export interface ApiErrorResponse {
+  error_code: string;
+  detail: string;
 }
 
-export interface CustomToken {
+export interface BpeVocabularyEntry {
+  token_id: number;
+  token_text: string;
+}
+
+export interface BpeMergeRule {
+  step: number;
+  pair: string[];
+  merged_token_text: string;
+}
+
+export interface BpeTrainingStep {
+  step: number;
+  pair: string[];
+  frequency: number;
+  merged_token_text: string;
+}
+
+export interface BpeTrainResponse {
+  vocabulary: BpeVocabularyEntry[];
+  merge_rules: BpeMergeRule[];
+  training_log: BpeTrainingStep[];
+  vocabulary_size: number;
+}
+
+export interface BpeToken {
   index: number;
   token_id: number;
   token_text: string;
-  is_new: boolean;
 }
 
-export interface CustomTokenizationResult {
+export interface BpeTokenizeResult {
   text: string;
-  tokens: CustomToken[];
+  tokens: BpeToken[];
   token_count: number;
   character_count: number;
   word_count: number;
   tokens_per_word: number;
   tokens_per_character: number;
-  vocabulary_size: number;
-  new_token_count: number;
-  vocabulary: VocabularyEntry[];
-}
-
-export interface VocabularyResponse {
-  vocabulary: VocabularyEntry[];
-  vocabulary_size: number;
-}
-
-export interface ResetResponse {
-  vocabulary: VocabularyEntry[];
-  vocabulary_size: number;
-}
-
-export interface ApiErrorResponse {
-  error_code: string;
-  detail: string;
 }

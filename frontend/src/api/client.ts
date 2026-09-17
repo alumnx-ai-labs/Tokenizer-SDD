@@ -1,11 +1,10 @@
 import type {
   ApiErrorResponse,
-  CustomTokenizationResult,
+  BpeTokenizeResult,
+  BpeTrainResponse,
   EncodingsResponse,
-  ResetResponse,
   SupportedEncoding,
   TokenizationResult,
-  VocabularyResponse,
 } from "../types/api";
 
 const API_BASE_URL = import.meta.env.VITE_TOKENIZER_API_URL ?? "http://localhost:8000";
@@ -69,43 +68,27 @@ export async function tokenizeFile(
   return handleResponse<TokenizationResult>(response);
 }
 
-export async function customTokenizeText(
-  text: string,
-  sessionId: string
-): Promise<CustomTokenizationResult> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/custom-tokenizer/tokenize/text`, {
+export async function trainBpe(
+  sessionId: string,
+  trainingText: string,
+  vocabSize: number
+): Promise<BpeTrainResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/bpe/train`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Session-Id": sessionId },
+    body: JSON.stringify({ training_text: trainingText, vocab_size: vocabSize }),
+  });
+  return handleResponse<BpeTrainResponse>(response);
+}
+
+export async function bpeTokenizeText(
+  sessionId: string,
+  text: string
+): Promise<BpeTokenizeResult> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/bpe/tokenize/text`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Session-Id": sessionId },
     body: JSON.stringify({ text }),
   });
-  return handleResponse<CustomTokenizationResult>(response);
-}
-
-export async function customTokenizeFile(
-  file: File,
-  sessionId: string
-): Promise<CustomTokenizationResult> {
-  const formData = new FormData();
-  formData.append("file", file);
-  const response = await fetch(`${API_BASE_URL}/api/v1/custom-tokenizer/tokenize/file`, {
-    method: "POST",
-    headers: { "X-Session-Id": sessionId },
-    body: formData,
-  });
-  return handleResponse<CustomTokenizationResult>(response);
-}
-
-export async function getVocabulary(sessionId: string): Promise<VocabularyResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/custom-tokenizer/vocabulary`, {
-    headers: { "X-Session-Id": sessionId },
-  });
-  return handleResponse<VocabularyResponse>(response);
-}
-
-export async function resetVocabulary(sessionId: string): Promise<ResetResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/custom-tokenizer/reset`, {
-    method: "POST",
-    headers: { "X-Session-Id": sessionId },
-  });
-  return handleResponse<ResetResponse>(response);
+  return handleResponse<BpeTokenizeResult>(response);
 }

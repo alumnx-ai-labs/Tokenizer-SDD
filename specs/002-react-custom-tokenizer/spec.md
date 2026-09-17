@@ -1,12 +1,16 @@
-# Feature Specification: React Frontend with Dual Tokenizer Modes
+# Feature Specification: React Frontend with Dual Tokenizer Modes and BPE Training
 
 **Feature Branch**: `002-react-custom-tokenizer`
 
 **Created**: 2026-09-16
 
+**Last Updated**: 2026-09-17
+
 **Status**: Draft
 
 **Input**: User description: "Update the existing Tokenizer Application: replace the Streamlit frontend with a React + TypeScript frontend; add a tokenizer mode selector between the existing tiktoken-based tokenizer and a new, independent Custom Tokenizer with its own dynamically-growing, deterministic vocabulary; keep existing text/TXT/PDF input, validation, and error handling; no database, no auth."
+
+**Update (2026-09-17)**: "Enhance the Custom Tokenizer with Byte Pair Encoding (BPE): keep Tiktokenizer and the existing (word-based) Custom Tokenizer unchanged; let a user enter training text, set a target vocabulary size, and start BPE training; after training, show the learned vocabulary, ordered merge rules, and per-step training details (pair selected and merged at each step); let the user then tokenize new text with the trained BPE tokenizer, showing tokens and token IDs in the existing tokenization result table; clearly separate the BPE training flow from the BPE tokenization flow with appropriate loading, empty, validation, success, and error states; BPE must learn merges only during training, never during tokenization; BPE vocabulary IDs must be deterministic."
 
 ## Clarifications
 
@@ -15,6 +19,14 @@
 - Q: Should the Custom Tokenizer treat two words that differ only in letter case (e.g., "Hello" vs "hello") as the same vocabulary token, or as two distinct tokens? → A: Case-insensitive — they map to the same vocabulary entry/ID, and frequency counts both.
 - Q: As a session's custom vocabulary grows over a long-running conversation, should every tokenization response and the vocabulary view always include the complete vocabulary, or should there be a cap with pagination for very large vocabularies? → A: Always the full vocabulary, no cap — new tokens keep being added to the same complete list every time.
 - Q: When a user switches between Tiktokenizer and Custom Tokenizer mode, should their already-entered text/file stay loaded, or should switching clear the input and results? → A: Keep the input loaded; clear only the previous mode's displayed results until "Tokenize" is pressed again.
+
+### Session 2026-09-17
+
+- Q: Should BPE training/tokenization count as a capability of the single "Custom Tokenizer" that the project's governing principles already permit as the one additional non-tiktoken tokenizer, or does it constitute a second, distinct tokenizer engine? → A: BPE is part of the single permitted Custom Tokenizer — it is an enhancement of that one tokenizer (word-based splitting and BPE are two selectable behaviors of the same tokenizer), not a separate third tokenizer engine.
+- Q: Should BPE merges be allowed to combine characters across whitespace, or should training split on whitespace first and only merge within each resulting word? → A: Pre-split on whitespace; merge only within each word's characters. Whitespace runs are never merged into another token.
+- Q: Should the system enforce an upper bound on training text length and/or target vocabulary size? → A: Yes — cap training text at the same 5 MB limit already used for uploads/typed text elsewhere in the app, and cap target vocabulary size at 50,000; reject requests exceeding either with a clear validation message before training starts.
+- Q: Should BPE's base symbols be case-sensitive, or case-folded like the existing word-based Custom Tokenizer? → A: Case-sensitive — "A" and "a" are distinct base symbols from the start, unlike the existing word-based tokenizer's case-insensitive matching.
+- Q: Should starting a new BPE training run require confirmation, since it discards the session's previous BPE model? → A: No confirmation — starting a new run immediately replaces the previous model, since results are deterministic and reproducible from the same inputs.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -148,6 +160,111 @@ exactly its original entries, frequencies, and size.
 
 ---
 
+### User Story 5 - Train a BPE Tokenizer on Custom Text (Priority: P5)
+
+Within Custom Tokenizer mode, a user enters training text, sets a target
+vocabulary size, and starts BPE (Byte Pair Encoding) training — separate
+from, and without affecting, the existing word-based Custom Tokenizer. Once
+training finishes, the user sees the learned vocabulary, the ordered merge
+rules, and a step-by-step training log showing which pair was selected and
+merged at each step.
+
+**Why this priority**: This is the headline enhancement of this update, but
+it is additive: the application must remain fully usable via Tiktokenizer
+and the existing Custom Tokenizer even if BPE training were never used,
+which is why it is sequenced after those established flows.
+
+**Independent Test**: Can be fully tested by opening the BPE Training flow,
+entering training text and a target vocabulary size, starting training, and
+confirming the resulting vocabulary, merge rules, and step-by-step log are
+all displayed and internally consistent (each step's merge matches the
+corresponding merge rule and produces the vocabulary shown) — without
+touching the word-based Custom Tokenizer or Tiktokenizer.
+
+**Acceptance Scenarios**:
+
+1. **Given** the BPE Training flow with no training run yet this session,
+   **When** the user first opens it, **Then** the system shows an empty
+   state indicating no BPE model has been trained yet, with no vocabulary,
+   merge rules, or training log displayed.
+2. **Given** valid training text and a valid target vocabulary size,
+   **When** the user starts training, **Then** the system shows a loading/
+   in-progress state, and MUST NOT accept a second concurrent training
+   request for the same session while it is running.
+3. **Given** a training run completes successfully, **When** results are
+   displayed, **Then** the system shows the final learned vocabulary (every
+   entry's token ID and token text), the ordered list of merge rules in the
+   exact sequence they were learned, and a training log listing, for every
+   step, the pair selected, the frequency that made it the top pair at that
+   step, and the resulting merged token.
+4. **Given** the BPE Training flow, **When** the user submits empty/
+   whitespace-only training text, a non-integer, zero, or negative target
+   vocabulary size, **Then** the system rejects the request with a clear,
+   field-specific validation message and does not start training.
+5. **Given** a target vocabulary size that is at or below the number of
+   distinct base symbols already present in the training text, **When** the
+   user starts training, **Then** the system rejects the request with a
+   validation message explaining the minimum valid vocabulary size for that
+   training text.
+6. **Given** a target vocabulary size larger than the training text can
+   ever reach (no adjacent pair repeats), **When** training runs, **Then**
+   it stops early once no further merge is possible, and the system clearly
+   reports the final vocabulary size actually achieved rather than reporting
+   an error.
+7. **Given** a training request that fails on the backend, **When** the
+   failure occurs, **Then** the system shows a distinct, clear error state
+   and leaves any previously trained model for that session unchanged.
+8. **Given** a session already has a trained BPE model, **When** the user
+   runs training again with new training text or a new target vocabulary
+   size, **Then** training starts immediately without a confirmation
+   prompt, and the previous vocabulary, merge rules, and training log are
+   entirely replaced by the new run's results.
+
+---
+
+### User Story 6 - Tokenize Text with the Trained BPE Tokenizer (Priority: P6)
+
+After training a BPE model, a user enters new text and tokenizes it using
+that trained model, seeing the resulting tokens and token IDs in the same
+tokenization result table used by the other tokenizer flows.
+
+**Why this priority**: This is what makes BPE training useful, but it is
+only meaningful once User Story 5 has produced a trained model, so it is
+sequenced immediately after it.
+
+**Independent Test**: Can be fully tested by training a BPE model, then
+entering new text (including text with characters not seen during
+training) in the BPE Tokenization flow, tokenizing it, and confirming the
+displayed tokens/IDs are correct, deterministic, and that neither the
+vocabulary nor the merge rules changed as a result.
+
+**Acceptance Scenarios**:
+
+1. **Given** no BPE model has been trained yet for the session, **When**
+   the user opens the BPE Tokenization flow, **Then** the system shows an
+   empty/blocked state instructing the user to train a BPE model first, and
+   does not allow a tokenization request to be submitted.
+2. **Given** a trained BPE model exists, **When** the user enters text and
+   tokenizes it, **Then** the system shows a loading state followed by the
+   resulting ordered tokens and their token IDs in the existing tokenization
+   result table, using only the merge rules learned during training.
+3. **Given** a trained BPE model, **When** the user tokenizes the exact same
+   text more than once, **Then** the resulting tokens and token IDs are
+   identical every time, and the trained vocabulary and merge rules remain
+   unchanged after each tokenization.
+4. **Given** a trained BPE model, **When** the user tokenizes text
+   containing characters that never appeared in the training text, **Then**
+   the system still completes tokenization deterministically (without
+   erroring) and without adding any new merge rule to the trained model.
+5. **Given** the BPE Tokenization flow, **When** the user submits empty/
+   whitespace-only text, **Then** the system rejects the request with a
+   clear validation message and does not call the trained model.
+6. **Given** a tokenization request that fails on the backend, **When** the
+   failure occurs, **Then** the system shows a distinct, clear error state
+   and the trained model is left unchanged.
+
+---
+
 ### Edge Cases
 
 - What happens when the user requests tokenization without selecting a
@@ -183,6 +300,37 @@ exactly its original entries, frequencies, and size.
   request is still in flight? → The system MUST leave the vocabulary in a
   consistent state — either the reset or the tokenization's update applies
   cleanly, never a mix that produces duplicate or missing entries.
+- What happens when BPE training text has fewer distinct base symbols than
+  the requested target vocabulary size can ever reach? → Training MUST stop
+  once no further merge is possible and MUST report the smaller final
+  vocabulary size actually achieved, not an error.
+- What happens when the requested BPE target vocabulary size is invalid
+  (non-integer, zero, negative, at/below the training text's base symbol
+  count, or above 50,000)? → The system MUST reject the request with a
+  clear, specific validation message and MUST NOT start training.
+- What happens when the submitted BPE training text exceeds 5 MB? → The
+  system MUST reject the request with a message stating the limit and
+  MUST NOT start training, consistent with the same limit already enforced
+  for other text input in this application.
+- What happens when the user attempts BPE tokenization before any BPE
+  training has completed for their session? → The system MUST block the
+  attempt and clearly instruct the user to train a BPE model first.
+- What happens when a second BPE training request arrives for a session
+  while a prior training request is still running? → The system MUST
+  reject the second request rather than running two trainings concurrently
+  against the same session's model.
+- What happens when BPE-tokenized text contains characters that never
+  appeared in the training text? → The system MUST still tokenize it
+  deterministically using the trained model's base symbols, without
+  crashing and without learning a new merge rule.
+- What happens if BPE training or tokenization fails, or a session's BPE
+  model becomes invalid mid-request? → The system MUST report a distinct,
+  clear error rather than crashing or returning a partial/corrupted result,
+  and MUST leave any previously trained model unchanged.
+- What happens when the most frequent adjacent pair in the training text
+  would span a whitespace boundary (e.g., the end of one word and the
+  start of the next)? → That pair MUST NOT be merged; only the most
+  frequent pair that occurs within a single word is eligible at each step.
 
 ## Requirements *(mandatory)*
 
@@ -267,6 +415,93 @@ exactly its original entries, frequencies, and size.
   token data — without crashing or returning a partial/corrupted result.
 - **FR-018**: The system MUST NOT introduce authentication, user accounts,
   or any database/persistent storage technology for this feature.
+- **FR-019**: Within Custom Tokenizer mode, the system MUST provide a
+  distinct BPE Training flow and a distinct BPE Tokenization flow, each
+  separate from one another and from the existing word-based Custom
+  Tokenizer flow, so a user always knows which one they are interacting
+  with; no single, ambiguous control MUST trigger more than one of the
+  three. BPE Training and BPE Tokenization are an enhancement of the one
+  Custom Tokenizer this application already provides (a second selectable
+  behavior alongside its existing word-based splitting), not a separate,
+  independent third tokenizer engine.
+- **FR-020**: The BPE Training flow MUST let the user supply training text
+  and a target vocabulary size, and MUST validate both before starting:
+  training text MUST NOT be empty or whitespace-only and MUST NOT exceed
+  5 MB (the same maximum already enforced elsewhere in this application
+  for typed/uploaded text), and the target vocabulary size MUST be a
+  positive integer strictly greater than the number of distinct base
+  symbols present in the training text and MUST NOT exceed 50,000; any
+  violation MUST be rejected with a clear, field-specific message and MUST
+  NOT start training.
+- **FR-021**: While a BPE training run is in progress for a session, the
+  system MUST show a loading/in-progress state and MUST reject any second
+  training request for that same session submitted before the first
+  completes, rather than queueing or running it concurrently.
+- **FR-022**: The BPE algorithm MUST first split the training text into
+  words using the same whitespace-boundary rule as the existing word-based
+  Custom Tokenizer (a maximal run of whitespace is its own unmerged unit,
+  never a candidate for merging), then repeatedly find the most frequent
+  adjacent pair of symbols occurring within a single word (never spanning
+  a whitespace boundary) and merge it into a new token, recording each
+  merge as an ordered rule, until either the target vocabulary size is
+  reached or no within-word adjacent pair occurs more than once —
+  whichever happens first — and MUST clearly report the final vocabulary
+  size actually achieved when it is smaller than the requested target.
+- **FR-023**: Upon successful BPE training completion, the system MUST
+  return and display: the complete learned vocabulary (every entry's token
+  ID and token text), the ordered list of merge rules in the exact sequence
+  learned, and a step-by-step training log identifying, for each step, the
+  pair selected, the frequency that made it the top pair at that step, and
+  the resulting merged token.
+- **FR-024**: BPE vocabulary token IDs MUST be assigned deterministically —
+  training on identical training text with an identical target vocabulary
+  size MUST always produce the same vocabulary, the same merge rules in the
+  same order, and the same token IDs, regardless of session, run count, or
+  timing.
+- **FR-025**: The BPE Tokenization flow MUST let the user enter new text
+  and tokenize it using the most recently trained BPE model for their
+  session; if no BPE model has been trained for that session, the system
+  MUST block the attempt and clearly instruct the user to train one first,
+  without sending a request that assumes a model exists.
+- **FR-026**: BPE tokenization MUST apply only the merge rules learned
+  during the most recent training for that session, in their learned
+  order, and MUST NOT learn, add, remove, or reorder any merge rule, and
+  MUST NOT alter the trained vocabulary, as part of tokenizing.
+- **FR-027**: BPE tokenization of text containing symbols not present in
+  the training text MUST still complete deterministically (falling back to
+  base-symbol-level tokens for the unseen input) rather than failing or
+  silently producing an incorrect result.
+- **FR-028**: For every successful BPE tokenization request, the system
+  MUST return the resulting ordered tokens and their token IDs, and MUST
+  display them in the same tokenization result table used by the other
+  tokenizer flows.
+- **FR-029**: Starting a new BPE training run for a session MUST proceed
+  immediately, without requiring a confirmation step, and MUST replace
+  that session's previously trained BPE model (vocabulary, merge rules, and
+  training log) in its entirety; subsequent BPE tokenization requests for
+  that session MUST use only the newest trained model.
+- **FR-030**: A session's BPE model (vocabulary, merge rules, and training
+  log) MUST be isolated from other sessions' BPE models in the same manner
+  as the existing Custom Tokenizer vocabulary, and MUST be retained only for
+  as long as its owning session is active and the backend is running; no
+  database or other persistent storage is used for it.
+- **FR-031**: The system MUST detect and report, as distinct clear errors,
+  BPE-specific failure conditions — invalid training input, a training
+  failure, an internal BPE model becoming invalid, or a tokenization
+  request made with no valid trained model — without crashing or returning
+  a partial/corrupted result, and without altering any previously trained
+  model when the failure occurs.
+- **FR-032**: All BPE training and tokenization computation (selecting
+  pairs, performing merges, assigning vocabulary IDs, and applying learned
+  rules) MUST be performed by the server-side application logic; the
+  client-side interface MUST be limited to collecting user input, calling
+  the server, holding UI/loading/error state, and rendering the returned
+  vocabulary, merge rules, training log, and tokenization results — it MUST
+  NOT itself compute merges or assign vocabulary IDs.
+- **FR-033**: Adding BPE Training and BPE Tokenization MUST NOT change the
+  behavior, inputs, outputs, or vocabulary-growth rules of Tiktokenizer
+  mode or the existing word-based Custom Tokenizer flow described in
+  FR-001 through FR-018.
 
 ### Key Entities
 
@@ -285,6 +520,25 @@ exactly its original entries, frequencies, and size.
 - **Tokenizer Session**: The scope within which one user's Custom
   Tokenizer vocabulary persists and grows, isolated from other sessions'
   vocabularies.
+- **BPE Training Request**: A user's input to start BPE training —
+  training text and a target vocabulary size.
+- **BPE Merge Rule**: One learned rule pairing two symbols/tokens that are
+  merged into a single new token, together with the step number at which
+  it was learned; merge rules are ordered and applied in that order during
+  tokenization.
+- **BPE Training Step**: One iteration of the training log — the pair
+  selected, the frequency that made it the most frequent adjacent pair at
+  that step, and the resulting merged token.
+- **BPE Vocabulary Entry**: One entry in a trained BPE model's
+  vocabulary — token ID and token text — covering both base symbols and
+  every symbol produced by a merge.
+- **BPE Model**: The complete trained artifact for one session — its
+  vocabulary, ordered merge rules, and training log — produced by the most
+  recent BPE Training Request and used exclusively by that session's BPE
+  Tokenization requests.
+- **BPE Tokenization Result**: The outcome of tokenizing new text with a
+  session's trained BPE Model — ordered tokens, token IDs, and statistics,
+  shown in the existing tokenization result table.
 
 ## Success Criteria *(mandatory)*
 
@@ -310,6 +564,26 @@ exactly its original entries, frequencies, and size.
 - **SC-007**: A user can go from choosing an input method (text, TXT, or
   PDF) to seeing full tokenized results in a single "Tokenize" action, for
   either tokenizer mode.
+- **SC-008**: A user can go from entering training text and a target
+  vocabulary size to seeing the complete learned vocabulary, ordered merge
+  rules, and step-by-step training details in a single "Train" action.
+- **SC-009**: Tokenizing identical text with an unchanged trained BPE model
+  produces identical tokens and token IDs, 100% of the time.
+- **SC-010**: BPE tokenization never changes the vocabulary, merge rules,
+  or training log produced by the most recent training, verified every
+  time it is used.
+- **SC-011**: Users can tell, without ambiguity, whether they are training
+  a BPE model, tokenizing with an already-trained one, or using the
+  existing word-based Custom Tokenizer, 100% of the time.
+- **SC-012**: Attempting BPE tokenization before training completes is
+  either prevented or clearly explained, with no silent failures or
+  unexplained empty results, 100% of the time.
+- **SC-013**: Training two BPE models from the same training text and the
+  same target vocabulary size — on the same session or a different one —
+  always yields the same vocabulary, merge rules, and token IDs.
+- **SC-014**: Training text over 5 MB or a target vocabulary size over
+  50,000 is rejected with a clear message before any training work starts,
+  100% of the time.
 
 ## Assumptions
 
@@ -344,3 +618,60 @@ exactly its original entries, frequencies, and size.
 - No automated tests, UI polish level, or specific component boundaries are
   dictated by this spec beyond what's needed to satisfy the requirements
   above; those are technical/planning concerns.
+- **BPE placement**: BPE Training and BPE Tokenization are two additional,
+  clearly separated flows reachable from Custom Tokenizer mode, distinct
+  from the existing word-based Custom Tokenizer flow. They share the mode's
+  session scoping but not its vocabulary, merge rules, or growth behavior.
+  Per the 2026-09-17 clarification, BPE is an enhancement of the single,
+  already-permitted Custom Tokenizer (word-based splitting and BPE are two
+  behaviors of that one tokenizer) — it is not a second, independent
+  tokenizer engine, so it does not require expanding the number of
+  non-tiktoken tokenizers the application supports.
+- **BPE base symbols**: for the purposes of counting "distinct base
+  symbols" and forming the starting point of a BPE model, a base symbol is
+  one Unicode character of the training text (consistent with the
+  character-oriented approach the existing Custom Tokenizer already takes),
+  not a raw byte. This keeps the minimum-vocabulary-size validation rule
+  (FR-020) and the training algorithm (FR-022) well-defined without
+  dictating an internal representation.
+- **BPE whitespace handling**: per the 2026-09-17 clarification, training
+  text is first split into words on whitespace boundaries (the same rule
+  the existing word-based Custom Tokenizer uses), and merges only ever
+  combine symbols within a single word; a run of whitespace is counted
+  among the training text's base symbols but is never itself merged into
+  another token, and no merge ever spans across a whitespace boundary.
+- **BPE case sensitivity**: per the 2026-09-17 clarification, BPE base
+  symbols are case-sensitive — "A" and "a" are distinct symbols from the
+  start of training and may end up in different merges/tokens — unlike the
+  existing word-based Custom Tokenizer's case-insensitive word matching
+  (FR-008). This is an intentional difference between the two behaviors of
+  the one Custom Tokenizer, not an inconsistency to reconcile.
+- **BPE size limits**: per the 2026-09-17 clarification, training text is
+  capped at 5 MB (the same limit already enforced for other text input in
+  this application) and target vocabulary size is capped at 50,000;
+  requests exceeding either limit are rejected before training starts.
+- **Backend/frontend split**: per explicit instruction, all BPE training
+  and tokenization computation (pair selection, merging, vocabulary ID
+  assignment, and applying learned rules) is implemented by the backend
+  service; the frontend is limited to input collection, API calls, UI
+  state, and rendering results. This is a given directive from the
+  request, not a choice made while writing this specification, and is
+  reflected in FR-032 in behavior-level ("server-side" / "client-side")
+  terms rather than by naming a specific technology.
+- **Unseen-symbol fallback**: when BPE-tokenizing text containing a
+  character never seen during training, the trained model still produces a
+  token for it deterministically (e.g., as its own base-symbol token)
+  rather than erroring, since rejecting ordinary novel input would make the
+  BPE Tokenization flow impractical for real use.
+- **Re-training behavior**: each new BPE training run fully replaces the
+  session's previous BPE model; this specification does not require
+  retaining a history of prior trained models. Per the 2026-09-17
+  clarification, no confirmation prompt is required before starting a new
+  run, since a BPE model is fully deterministic and reproducible from the
+  same training text and target vocabulary size (unlike Reset Vocabulary
+  in US4, which discards non-reproducible frequency history and does
+  require confirmation).
+- **Concurrent training**: a second BPE training request for a session
+  while one is already running is rejected (rather than queued), consistent
+  with how the rest of this application surfaces one clear state at a time
+  instead of silently queuing background work.

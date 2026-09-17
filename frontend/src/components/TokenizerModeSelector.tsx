@@ -27,7 +27,7 @@ function TokenizerModeSelector({ mode, onChange }: TokenizerModeSelectorProps) {
           checked={mode === "custom"}
           onChange={() => onChange("custom")}
         />
-        Custom Tokenizer
+        BPE Custom Tokenizer
       </label>
     </fieldset>
   );

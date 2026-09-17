@@ -1,20 +1,18 @@
 import TokenCard from "./TokenCard";
-import type { CustomToken, Token } from "../types/api";
+import type { BpeToken, Token } from "../types/api";
+
+type AnyToken = Token | BpeToken;
 
 interface TokenVisualizationProps {
-  tokens: (Token | CustomToken)[];
+  tokens: AnyToken[];
 }
 
-function tokenText(token: Token | CustomToken): string {
+function tokenText(token: AnyToken): string {
   return "decoded_text" in token ? token.decoded_text : token.token_text;
 }
 
-function tokenBytes(token: Token | CustomToken): number[] {
+function tokenBytes(token: AnyToken): number[] {
   return "token_bytes" in token ? token.token_bytes : [];
-}
-
-function tokenIsNew(token: Token | CustomToken): boolean | undefined {
-  return "is_new" in token ? token.is_new : undefined;
 }
 
 function TokenVisualization({ tokens }: TokenVisualizationProps) {
@@ -27,7 +25,6 @@ function TokenVisualization({ tokens }: TokenVisualizationProps) {
           tokenId={token.token_id}
           tokenText={tokenText(token)}
           tokenBytes={tokenBytes(token)}
-          isNew={tokenIsNew(token)}
         />
       ))}
     </div>

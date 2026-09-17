@@ -64,6 +64,26 @@ class MalformedTokenDataError(TokenizerError):
     status_code = 400
 
 
+class InvalidVocabSizeError(TokenizerError):
+    error_code = "invalid_vocab_size"
+    status_code = 400
+
+
+class BPETrainingInProgressError(TokenizerError):
+    error_code = "bpe_training_in_progress"
+    status_code = 409
+
+
+class InvalidBPEModelStateError(TokenizerError):
+    error_code = "invalid_bpe_model_state"
+    status_code = 500
+
+
+class BPEModelNotTrainedError(TokenizerError):
+    error_code = "bpe_model_not_trained"
+    status_code = 400
+
+
 def _error_response(request: Request, exc: TokenizerError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,
